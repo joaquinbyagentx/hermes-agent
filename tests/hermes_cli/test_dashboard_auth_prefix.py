@@ -309,6 +309,19 @@ class TestPublicUrlOverride:
         # Location header (`{redirect_uri}?code=stub_code&state=…`).
         return r.headers["location"].split("?", 1)[0]
 
+    def test_desktop_local_child_does_not_inherit_public_url(
+        self, patch_config, monkeypatch
+    ):
+        """A Desktop-spawned loopback backend must keep token auth even when
+        the same HERMES_HOME also configures a public dashboard URL."""
+        from hermes_cli.dashboard_auth import prefix as prefix_mod
+
+        patch_config("https://public-hermes.example")
+        monkeypatch.setenv("HERMES_DASHBOARD_PUBLIC_URL", "https://env.example")
+        monkeypatch.setenv("HERMES_DESKTOP", "1")
+
+        assert prefix_mod.resolve_public_url() == ""
+
 
 
     def test_env_overrides_config_public_url(

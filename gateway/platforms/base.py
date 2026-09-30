@@ -4609,6 +4609,10 @@ class BasePlatformAdapter(ABC):
                         or _tts_paths or _tts_caption_delivered:
                     self.pause_typing_for_chat(event.source.chat_id)
                 if text_content and not _tts_caption_delivered:
+                    # Keep the handler drain-visible through the platform ACK and ledger write.
+                    track = getattr(getattr(self, "gateway_runner", None), "_track_outbound_delivery_task", None)
+                    if callable(track):
+                        track(asyncio.current_task())
                     await self._send_final_text(
                         event, session_key, text_content, _final_thread_metadata,
                         is_ephemeral_response, _ephemeral_ttl, _record_delivery)

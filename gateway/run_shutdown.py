@@ -198,6 +198,7 @@ class GatewayShutdownMixin(GatewaySessionEndMixin):
             + self._active_cron_job_count()
             + self._active_api_run_count()
             + self._active_deferred_agent_worker_count()
+            + self._active_outbound_delivery_count()
         )
 
     @staticmethod
@@ -211,6 +212,34 @@ class GatewayShutdownMixin(GatewaySessionEndMixin):
         # (sentinel 1) so the machine stays awake until the source is readable again.
         from cron.scheduler import get_running_job_ids
         return len(get_running_job_ids())
+
+    def _active_outbound_delivery_count(self) -> int:
+        """Count live platform-handler tasks that own a final delivery.
+
+        Agent execution can release ``_running_agents`` immediately after the
+        final response is materialized, while the same handler still awaits a
+        messaging-platform acknowledgement and the delivery-ledger update.
+        Restart drain must keep that handler alive through the ACK boundary;
+        otherwise startup recovery sees an ambiguous ``attempting`` row and
+        honestly redelivers a message the platform may already have accepted.
+        """
+        tasks = getattr(self, "_active_outbound_delivery_tasks", None)
+        if not isinstance(tasks, set):
+            return 0
+        return sum(1 for task in list(tasks) if not task.done())
+
+    def _track_outbound_delivery_task(self, task: asyncio.Task | None) -> None:
+        """Expose a final-delivery handler to restart/shutdown drain."""
+        if task is None or task.done():
+            return
+        tasks = getattr(self, "_active_outbound_delivery_tasks", None)
+        if not isinstance(tasks, set):
+            tasks = set()
+            self._active_outbound_delivery_tasks = tasks
+        if task in tasks:
+            return
+        tasks.add(task)
+        task.add_done_callback(lambda done: tasks.discard(done))
 
     def _active_cron_job_count(self) -> int:
         """Cron jobs currently executing — they run outside ``_running_agents``; 0 if cron can't import.

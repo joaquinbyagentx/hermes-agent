@@ -1,6 +1,11 @@
 """Unit tests for in-band restart after-turn deferral helpers (#77184)."""
 
+import asyncio
 import math
+from types import SimpleNamespace
+from typing import Any, cast
+
+import pytest
 
 from gateway.restart import (
     DEFAULT_GATEWAY_RESTART_AFTER_TURN_TIMEOUT,
@@ -58,3 +63,36 @@ def test_load_restart_after_turn_timeout_preserves_zero(tmp_path, monkeypatch):
 
     monkeypatch.setenv("HERMES_RESTART_AFTER_TURN_TIMEOUT", "0")
     assert GatewayRunner._load_restart_after_turn_timeout() == 0.0
+
+
+@pytest.mark.asyncio
+async def test_final_delivery_task_remains_active_until_platform_handler_finishes():
+    """Restart drain must not hit zero between final text and platform ACK."""
+    runner = cast(Any, SimpleNamespace(_active_outbound_delivery_tasks=set()))
+    release = asyncio.Event()
+
+    async def _delivery_handler():
+        await release.wait()
+
+    task = asyncio.create_task(_delivery_handler())
+    GatewayRunner._track_outbound_delivery_task(runner, task)
+
+    assert GatewayRunner._active_outbound_delivery_count(runner) == 1
+    release.set()
+    await task
+    await asyncio.sleep(0)
+    assert GatewayRunner._active_outbound_delivery_count(runner) == 0
+
+
+def test_active_work_aggregate_includes_final_delivery():
+    runner = cast(
+        Any,
+        SimpleNamespace(
+            _running_agent_count=lambda: 0,
+            _active_cron_job_count=lambda: 0,
+            _active_api_run_count=lambda: 0,
+            _active_deferred_agent_worker_count=lambda: 0,
+            _active_outbound_delivery_count=lambda: 1,
+        ),
+    )
+    assert GatewayRunner._active_work_count(runner) == 1

@@ -26,8 +26,8 @@ from tools.threat_patterns import scan_for_threats
 
 logger = logging.getLogger(__name__)
 
-# Interactive / user-facing tools never run concurrently: any of these in a batch is a barrier.
-_NEVER_PARALLEL_TOOLS = frozenset({"clarify", "manage_connections", "manage_catalog", "setup_beat", "set_theme"})
+# Interactive / user-facing tools are barriers; vision is serialized to protect local GPU admission (local patch).
+_NEVER_PARALLEL_TOOLS = frozenset({"clarify", "manage_connections", "manage_catalog", "setup_beat", "set_theme", "vision_analyze"})
 
 # Read-only tools with no shared mutable session state.
 _PARALLEL_SAFE_TOOLS = frozenset({
@@ -38,7 +38,6 @@ _PARALLEL_SAFE_TOOLS = frozenset({
     "session_search",
     "skill_view",
     "skills_list",
-    "vision_analyze",
     "web_extract",
     "web_search",
 })

@@ -573,38 +573,37 @@ def test_initial_connect_budget_parks_instead_of_exiting_then_revives(monkeypatc
     asyncio.run(_scenario())
 
 
-def test_breaker_opened_by_tool_errors_says_rejected_not_unreachable(monkeypatch, tmp_path):
-    """Three completed calls whose payload is an error still open the breaker (#10447), but the
-    open-breaker message must not claim the server is unreachable — it answered every time
-    (#11113); a single transport strike in the streak makes it "unreachable" again."""
+def test_tool_application_errors_do_not_trip_server_breaker(monkeypatch, tmp_path):
+    """Completed RPCs with ``isError`` must not disable the MCP server."""
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 
     from tools import mcp_tool
     from tools.mcp_tool_handlers import _make_tool_handler
 
-    async def _call_tool_rejects(*a, **kw):
+    call_count = {"n": 0}
+
+    async def _call_tool_validation_error(*a, **kw):
+        call_count["n"] += 1
         result = MagicMock()
         result.is_error = True
         block = MagicMock()
-        block.text = "DNS lookup failed for https://nope.invalid"
+        block.text = "Request validation failed: draftId is required"
         result.content = [block]
         result.structured_content = None
         return result
 
-    _install_stub_server(mcp_tool, "srv", _call_tool_rejects)
+    _install_stub_server(mcp_tool, "srv", _call_tool_validation_error)
     _mcp_loop._ensure_mcp_loop()
-    try:
-        handler = _make_tool_handler("srv", "fetch", 10.0)
-        for _ in range(mcp_tool._CIRCUIT_BREAKER_THRESHOLD):
-            assert "DNS lookup failed" in json.loads(handler({}))["error"]
-        tripped = json.loads(handler({}))["error"].lower()
-        assert "rejected" in tripped and "unreachable" not in tripped, tripped
 
-        mcp_tool._reset_server_error("srv")
-        mcp_tool._bump_server_error("srv")                      # transport strike
-        mcp_tool._bump_server_error("srv", application=True)
-        mcp_tool._bump_server_error("srv", application=True)
-        assert "unreachable" in json.loads(handler({}))["error"].lower()
+    try:
+        handler = _make_tool_handler("srv", "send_draft", 10.0)
+        for _ in range(mcp_tool._CIRCUIT_BREAKER_THRESHOLD + 1):
+            parsed = json.loads(handler({}))
+            assert "Request validation failed" in parsed.get("error", "")
+
+        assert call_count["n"] == mcp_tool._CIRCUIT_BREAKER_THRESHOLD + 1
+        assert mcp_tool._server_error_counts.get("srv", 0) == 0
+        assert "srv" not in mcp_tool._server_breaker_opened_at
     finally:
         _cleanup(mcp_tool, "srv")
         mcp_tool._server_errors_all_application.pop("srv", None)

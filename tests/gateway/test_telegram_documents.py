@@ -158,9 +158,40 @@ def _make_photo(file_obj=None):
 
 class TestDocumentDownloadBlock:
 
+    @pytest.mark.asyncio
+    async def test_inbound_media_retries_network_timeout_then_succeeds(self, adapter):
+        """A transient Telegram/CDN timeout must not discard a user photo."""
+        from telegram.error import TimedOut
+
+        failed_file = _make_file_obj()
+        failed_file.download_as_bytearray.side_effect = TimedOut("Timed out")
+        good_file = _make_file_obj(b"photo-after-retry")
+        photo = _make_photo()
+        photo.get_file = AsyncMock(side_effect=[failed_file, good_file])
+
+        with patch("asyncio.sleep", new=AsyncMock()) as sleep:
+            file_obj, payload = await adapter._download_telegram_media_bytes(photo)
+
+        assert file_obj is good_file
+        assert payload == b"photo-after-retry"
+        assert photo.get_file.await_count == 2
+        sleep.assert_awaited_once_with(0.25)
 
     @pytest.mark.asyncio
-    async def test_supported_txt_injects_content(self, adapter):
+    async def test_inbound_media_does_not_retry_permanent_error(self, adapter):
+        """Only network failures are retried; malformed media still fails fast."""
+        photo = _make_photo()
+        photo.get_file = AsyncMock(side_effect=ValueError("bad file metadata"))
+
+        with pytest.raises(ValueError, match="bad file metadata"):
+            await adapter._download_telegram_media_bytes(photo)
+
+        assert photo.get_file.await_count == 1
+
+
+    @pytest.mark.parametrize("transient", [False, True])
+    @pytest.mark.asyncio
+    async def test_supported_txt_injects_content(self, adapter, transient):
         content = b"Hello from a text file"
         file_obj = _make_file_obj(content)
         doc = _make_document(
@@ -169,6 +200,10 @@ class TestDocumentDownloadBlock:
         )
         msg = _make_message(document=doc)
         update = _make_update(msg)
+
+        if transient:
+            from telegram.error import TimedOut
+            doc.get_file = AsyncMock(side_effect=[TimedOut("synthetic network timeout"), file_obj])
 
         await adapter._handle_media_message(update, MagicMock())
         event = adapter.handle_message.call_args[0][0]

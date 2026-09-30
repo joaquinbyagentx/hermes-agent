@@ -60,9 +60,17 @@ def bind_route_entry(agent: Any, entry: dict[str, Any], provider: str, model: st
             api_mode = _fallback_api_mode_resolved(agent, provider, model, base_url)
 
     old_model, old_provider, old_base_url = agent.model, agent.provider, agent.base_url
-    # Clear the per-config context_length override so the new model's own context window is
-    # resolved instead of the previous model's stale value (#22387).
+    # Never inherit the primary window; preserve the entry's safe operational limit (local patch).
+    raw_context = entry.get("context_length")
     agent._config_context_length = None
+    if raw_context is not None:
+        try:
+            context = int(raw_context)
+            if context <= 0:
+                raise ValueError("must be positive")
+            agent._config_context_length = context
+        except (TypeError, ValueError, OverflowError):
+            logger.warning("Ignoring invalid fallback context_length=%r for %s/%s", raw_context, provider, model)
     agent.model, agent.provider, agent.requested_provider = model, provider, provider
     agent.base_url, agent.api_mode = base_url, api_mode
     # reasoning_content echo opt-in travels with the active provider; restore_primary_runtime reverts it.

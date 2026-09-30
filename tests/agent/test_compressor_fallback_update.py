@@ -1,6 +1,7 @@
 """Tests that _try_activate_fallback updates the context compressor."""
 
 from unittest.mock import MagicMock, patch
+import pytest
 
 from run_agent import AIAgent
 from agent.context_compressor import ContextCompressor
@@ -42,11 +43,14 @@ def _make_agent_with_compressor() -> AIAgent:
     return agent
 
 
+@pytest.mark.parametrize("override,expected", [(None, 128_000), (96_000, 96_000), (-1, 128_000), ("invalid", 128_000)])
 @patch("agent.auxiliary_client.resolve_provider_client")
 @patch("agent.model_metadata.get_model_context_length", return_value=128_000)
-def test_compressor_updated_on_fallback(mock_ctx_len, mock_resolve):
+def test_compressor_updated_on_fallback(mock_ctx_len, mock_resolve, override, expected):
     """After fallback activation, the compressor must reflect the fallback model."""
     agent = _make_agent_with_compressor()
+    agent._fallback_model["context_length"] = override
+    mock_ctx_len.side_effect = lambda *args, **kwargs: kwargs.get("config_context_length") or 128_000
 
     assert agent.context_compressor.model == "primary-model"
 
@@ -68,7 +72,7 @@ def test_compressor_updated_on_fallback(mock_ctx_len, mock_resolve):
     assert c.base_url == "https://api.openai.com/v1"
     assert c.api_key == "sk-fallback"
     assert c.provider == "openai"
-    assert c.context_length == 128_000
-    assert c.threshold_tokens == int(128_000 * c.threshold_percent)
+    assert c.context_length == expected
+    assert c.threshold_tokens == int(expected * c.threshold_percent)
 
 

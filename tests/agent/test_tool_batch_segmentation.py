@@ -119,6 +119,16 @@ class TestPlanToolBatchSegments:
         assert _kinds(segments) == ["parallel", "sequential"]
         assert [tc.id for tc in segments[1][1]] == ["c1"]
 
+    def test_vision_calls_are_serialized_to_protect_local_gpu(self):
+        calls = [
+            _tc("vision_analyze", '{"image_url":"a.png","question":"a"}', call_id="v1"),
+            _tc("vision_analyze", '{"image_url":"b.png","question":"b"}', call_id="v2"),
+            _tc("vision_analyze", '{"image_url":"c.png","question":"c"}', call_id="v3"),
+        ]
+        segments = _plan_tool_batch_segments(calls)
+        assert _kinds(segments) == ["sequential"]
+        assert _flatten_ids(segments) == ["v1", "v2", "v3"]
+
 
 
     def test_overlapping_paths_split_across_segments(self, tmp_path, monkeypatch):

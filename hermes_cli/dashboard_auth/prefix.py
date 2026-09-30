@@ -118,6 +118,9 @@ def resolve_public_url() -> str:
     """Operator-declared dashboard public URL, or ``""`` (reconstruct from request). Precedence:
     ``HERMES_DASHBOARD_PUBLIC_URL`` env (blank counts as unset so a provisioned-but-blank secret
     cannot shadow config.yaml), then ``dashboard.public_url``; malformed warns and falls through."""
+    # Native Desktop's loopback child must not inherit the public OAuth URL.
+    if os.environ.get("HERMES_DESKTOP") == "1":
+        return ""
     env_raw = os.environ.get("HERMES_DASHBOARD_PUBLIC_URL", "")
     env_clean = _normalise_public_url(env_raw)
     if env_clean:

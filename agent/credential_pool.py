@@ -123,6 +123,7 @@ STRATEGY_ROUND_ROBIN = "round_robin"
 STRATEGY_RANDOM = "random"
 STRATEGY_LEAST_USED = "least_used"
 SUPPORTED_POOL_STRATEGIES = {
+    "quota_fallback",
     STRATEGY_FILL_FIRST,
     STRATEGY_ROUND_ROBIN,
     STRATEGY_RANDOM,
@@ -2129,6 +2130,19 @@ class CredentialPool(CredentialPoolAdminMixin, CredentialPoolModelCooldownMixin)
             self._entries = [e for e in self._entries if e.id not in pruned_ids]
         if cleared_any:
             self._persist(removed_ids=entries_to_prune)
+        if self._strategy == "quota_fallback" and self._entries:
+            # Explicit opt-in: concurrency and auth failures must not spend
+            # the backup account. Only provider-proven quota exhaustion may.
+            primary = self._entries[0]
+            quota_exhausted = (
+                primary.last_status == STATUS_EXHAUSTED
+                and primary.last_error_reason in {
+                    "usage_limit_reached", "insufficient_quota", "quota_exceeded",
+                }
+            )
+            if not quota_exhausted:
+                available = [e for e in available if e.id == primary.id]
+                pending_refresh = [e for e in pending_refresh if e.id == primary.id]
         return available, pending_refresh
 
     def _log_no_available_entries(self) -> None:
@@ -2372,6 +2386,10 @@ class CredentialPool(CredentialPoolAdminMixin, CredentialPoolModelCooldownMixin)
         self, credential_id: Optional[str],
     ) -> tuple[Optional[str], list[PooledCredential]]:
         with self._lock:
+            if credential_id and self._strategy == "quota_fallback":
+                allowed, pending = self._available_entries(clear_expired=True, refresh=True)
+                if not any(e.id == credential_id for e in allowed):
+                    return None, pending
             if credential_id:
                 self._active_leases[credential_id] = self._active_leases.get(credential_id, 0) + 1
                 self._current_id = credential_id

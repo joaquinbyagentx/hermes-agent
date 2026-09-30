@@ -9,6 +9,7 @@ block the send.
 
 import asyncio
 import threading
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -104,9 +105,15 @@ class TestProducerHook:
     @pytest.mark.asyncio
     async def test_normal_turn_records_and_delivers(self):
         adapter = _Adapter()
+        runner = MagicMock()
+        runner._adapter_for_source.return_value = adapter
+        cast(Any, adapter).gateway_runner = runner
+        current_task = asyncio.current_task()
+
         await _run(adapter, _event())
 
         assert adapter.sent == ["final answer"]
+        runner._track_outbound_delivery_task.assert_called_once_with(current_task)
         rows = _rows()
         assert len(rows) == 1
         assert rows[0][1] == "delivered"

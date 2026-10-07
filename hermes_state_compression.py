@@ -601,10 +601,19 @@ class SessionCompressionMixin:
         seen = {session_id}
         while current:
             parent_id = current.get("parent_session_id")
-            if not parent_id or parent_id in seen or self._is_explicit_fork_child_row(current, include_reset=True):
+            if not parent_id or parent_id in seen:
                 break
             parent = _row(parent_id)
             if not parent or parent.get("end_reason") != "compression":
+                break
+            # A compression continuation inherits its parent's ``source``; for ``--source tool``
+            # one-shot runs that made every continuation look like a tool fork, so the lease key
+            # moved to the child id right after compaction and the turn died with "lease lost".
+            # Only explicit fork markers end the walk here (local fix, Joaquin 2026-10-06).
+            probe = dict(current)
+            if probe.get("source") == "tool" and parent.get("source") == "tool":
+                probe["source"] = None
+            if self._is_explicit_fork_child_row(probe, include_reset=True):
                 break
             seen.add(parent_id)
             current = parent

@@ -60,12 +60,26 @@ def _hermes_ensure_own_tab():
     )
     if _os.path.exists(_marker):
         return
+    # hermes-local: one tab per session NAME across daemon restarts. Reuse the tab this
+    # name created last time if it still exists; otherwise create one and remember it.
+    # Prevents the tab pile-up where every daemon restart leaked a new about:blank tab.
+    _own = _os.path.join(_tf.gettempdir(), "hermes-bu-owntab-%s-%s.tid" % (_uid, _name))
+    _tid = None
     try:
-        # Force a fresh target: new_tab() would REUSE a blank current tab,
-        # which is exactly the tab a sibling daemon may also hold.
-        _tid = cdp("Target.createTarget", url="about:blank").get("targetId")
+        _prev = open(_own).read().strip()
+        _alive = {t.get("targetId") for t in cdp("Target.getTargets").get("targetInfos", []) if t.get("type") == "page"}
+        if _prev and _prev in _alive:
+            _tid = _prev
+    except Exception:
+        pass
+    try:
+        if not _tid:
+            # Force a fresh target: new_tab() would REUSE a blank current tab,
+            # which is exactly the tab a sibling daemon may also hold.
+            _tid = cdp("Target.createTarget", url="about:blank").get("targetId")
         if _tid:
             switch_tab(_tid)
+            open(_own, "w").write(_tid)
     except Exception:
         pass  # best-effort: worst case is pre-fix behavior
     try:

@@ -127,6 +127,11 @@ class ActiveSessionRefusal(str):
         obj.reason = reason
         return obj
 
+    def __reduce__(self):
+        # copy/deepcopy/pickle must rebuild with ``reason``; the str default drops it and
+        # crashes settlement publication when a refusal is deep-copied into the event stream.
+        return (self.__class__, (str(self), self.reason))
+
 
 def format_refusal_stderr(message: str) -> str:
     """Keep the refusal contract across the one-shot CLI subprocess boundary."""

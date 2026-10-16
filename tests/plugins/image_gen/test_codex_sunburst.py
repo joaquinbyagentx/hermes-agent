@@ -119,7 +119,7 @@ def test_generate_through_http_payload_and_no_family_fallback(monkeypatch):
     assert result["error_type"] == "empty_response"
     assert len(calls) == 2
     for payload in calls:
-        assert payload["model"] == "gpt-5.5"
+        assert payload["model"] == plugin._CODEX_CHAT_MODEL
         assert "tool_choice" not in payload
         assert payload["tools"][0]["model"] == API
         assert payload["tools"][0]["quality"] == "high"

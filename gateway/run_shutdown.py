@@ -198,7 +198,7 @@ class GatewayShutdownMixin(GatewaySessionEndMixin):
             + self._active_cron_job_count()
             + self._active_api_run_count()
             + self._active_deferred_agent_worker_count()
-            + self._active_outbound_delivery_count()
+            + getattr(self, "_active_outbound_delivery_count", lambda: 0)()
         )
 
     @staticmethod

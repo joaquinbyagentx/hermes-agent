@@ -98,7 +98,32 @@ def bind_route_entry(agent: Any, entry: dict[str, Any], provider: str, model: st
     _update_fallback_context_compressor(agent)
     _reresolve_fallback_reasoning_config(agent)
     _rescope_fallback_extra_body(agent, old_model, old_provider, old_base_url)
+    _apply_entry_runtime_overrides(agent, entry)
     return old_model, old_provider
+
+
+def _apply_entry_runtime_overrides(agent: Any, entry: dict[str, Any]) -> None:
+    """Local patch: honor a fallback entry's own ``reasoning_effort`` and ``service_tier``.
+    Primary restore reinstalls the snapshot's reasoning_config and request_overrides."""
+    from hermes_constants import parse_reasoning_effort
+    if entry.get("reasoning_effort") not in (None, ""):
+        parsed = parse_reasoning_effort(entry.get("reasoning_effort"))
+        if parsed is not None:
+            agent.reasoning_config = parsed
+    if "service_tier" not in entry:
+        return
+    from agent.fast_mode import STATIC_TIERS, parse_service_tier
+    from hermes_cli.models import resolve_fast_mode_overrides
+    overrides = dict(getattr(agent, "request_overrides", {}) or {})
+    overrides.pop("service_tier", None)
+    overrides.pop("speed", None)
+    tier = parse_service_tier(entry.get("service_tier"))
+    if tier in STATIC_TIERS:
+        overrides.update(resolve_fast_mode_overrides(
+            agent.model, provider=agent.provider, base_url=agent.base_url, tier=tier) or {})
+    agent.request_overrides = overrides
+    logger.info("Fallback %s: entry reasoning=%s request tier=%s", agent.model,
+                agent.reasoning_config, overrides.get("service_tier") or overrides.get("speed") or "standard")
 
 
 def reinstall_runtime_snapshot(agent: Any, rt: dict[str, Any]) -> None:

@@ -323,6 +323,19 @@ def _find_cli() -> Optional[list[str]]:
     return [sys.executable, "-m", "browser_harness.run"]
 
 
+def _link_shared_browser_workspace(path: Path) -> None:
+    """Local: link the shared helpers + domain/interaction skills from ~/.hermes/browser-workspace
+    into each per-task workspace so every browser_exec call starts with them (snapshot/click_ref...)."""
+    shared = Path(get_hermes_home()) / "browser-workspace"
+    for name in ("agent_helpers.py", "domain-skills", "interaction-skills"):
+        src, dst = shared / name, path / name
+        try:
+            if src.exists() and not dst.exists() and not dst.is_symlink():
+                dst.symlink_to(src)
+        except OSError:
+            pass
+
+
 def _workspace_dir(task_id: Optional[str]) -> Optional[str]:
     """Stable per-task scratch dir that persists across browser_exec calls"""
     if os.environ.get("BH_AGENT_WORKSPACE"):
@@ -331,6 +344,7 @@ def _workspace_dir(task_id: Optional[str]) -> Optional[str]:
         safe = _TASK_ID_SAFE_RE.sub("_", str(task_id or "default"))[:80] or "default"
         path = Path(get_hermes_home()) / "cache" / "browser-use" / "workspace" / safe
         path.mkdir(parents=True, exist_ok=True)
+        _link_shared_browser_workspace(path)
         return str(path)
     except Exception as e:
         logger.debug("browser_exec workspace unavailable: %s", e)
@@ -908,7 +922,14 @@ _HEADER_BASE = (
     "collected count against what was asked before answering.\n\n"
     "Batch each sub-procedure (navigate, wait, extract, act) into one call — do not spend a call per "
     "action — but for long extractions prefer several medium calls that append to workspace files over "
-    "one giant call, so progress survives timeouts."
+    "one giant call, so progress survives timeouts.\n\n"
+    "READ AND ACT BY REFS (preferred over screenshots/raw HTML/coordinates): snapshot(scope=None) prints "
+    "interactive elements as `e7 button 'Submit'`; act with click_ref('e7'), fill_ref('e3', text), "
+    "select_ref(ref, option), or click_text('Submit'). Refs die on navigation/re-render: snapshot() again "
+    "after acting. Also: use_tab(url) (reuses the host's tab), settle() (load + DOM quiet), wait_text(t), "
+    "page_text(scope), dismiss_overlays() (cookie/consent banners), xhr_log() (confirm the backend got it), "
+    "slow_js(expr) for heavy pages. Verify each action by reading the result back (value, URL, text), "
+    "not by assuming. Site notes: domain-skills/<site>/*.md and interaction-skills/*.md in the workspace."
 )
 
 _HEADER_VISION = (

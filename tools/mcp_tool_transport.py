@@ -592,7 +592,7 @@ class MCPServerTransportMixin:
                 # Without max_sse_event_size the SDK parses each event against httpx2's 1 MiB default,
                 # a tighter second cap under our wire cap: a large tools/list or tool result (an
                 # editor screenshot) failed outright. Local: per-server override (config max_sse_event_size).
-                _sse_cap = self._max_sse_event_size if self._max_sse_event_size is not None else _MCP_HTTP_MAX_BODY_BYTES
+                _sse_cap = getattr(self, "_max_sse_event_size", None) or _MCP_HTTP_MAX_BODY_BYTES
                 async with _core.streamable_http_client(url, http_client=http_client,
                                                         max_sse_event_size=_sse_cap) as streams:
                     yield streams

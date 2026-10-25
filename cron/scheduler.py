@@ -2585,6 +2585,15 @@ def run_job(
     ``extra_prompt``: optional per-run context from ``cronjob(action='run', prompt=...)`` (#57331). Appended
     to the stored prompt for this fire only — never persisted to the job definition.
     """
+    # Local (Jose 2026-10-25): no cron fires unless it is documented and current in the wiki.
+    try:
+        from cron.wiki_gate import check as _wiki_gate_check
+        _blocked = _wiki_gate_check(job)
+    except Exception:  # noqa: BLE001
+        logger.warning("cron wiki gate errored; allowing job", exc_info=True)
+        _blocked = None
+    if _blocked:
+        return True, f"# Cron blocked\n\n{_blocked}\n", "[SILENT]", None
     from gateway.session_cron import current_execution
     owner_execution = current_execution()
     if owner_execution is not None and owner_execution[2:] != (job['id'], execution_id):

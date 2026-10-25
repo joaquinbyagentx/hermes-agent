@@ -188,6 +188,17 @@ def _build_child_system_prompt(
     # Keeping it out of the system prompt avoids sending OAuth Anthropic the
     # same task in both roles, while preserving the normal user-turn contract.
     parts = ["You are a focused subagent working on a specific delegated task."]
+    # Local (Jose 2026-10-25): every subagent reads the shared Knowledge wiki before acting.
+    with _quiet(None):
+        import os as _os
+        _vault = _os.environ.get("OBSIDIAN_VAULT_PATH") or _os.path.expanduser(
+            "~/Library/Mobile Documents/com~apple~CloudDocs/Joaquins Vault")
+        _kn = _os.path.join(_vault, "Agent-Shared", "Knowledge")
+        if _os.path.isfile(_os.path.join(_kn, "README.md")):
+            parts.append(
+                "\nMANDATORY FIRST STEP: before acting or making any claim about past work, read these files in "
+                f"'{_kn}': README.md, LECCIONES.md, CRONS.md, META.md, then the canonical page for your topic. "
+                "Never create cron jobs. Never touch Meta (ads, cases, App Review). Verify live state before reporting.")
     if context and context.strip():
         parts.append(f"\nCONTEXT:\n{context}")
     if workspace_path and str(workspace_path).strip():

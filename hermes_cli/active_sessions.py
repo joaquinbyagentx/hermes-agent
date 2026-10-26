@@ -127,10 +127,10 @@ class ActiveSessionRefusal(str):
         obj.reason = reason
         return obj
 
-    def __reduce__(self):
-        # copy/deepcopy/pickle must rebuild with ``reason``; the str default drops it and
-        # crashes settlement publication when a refusal is deep-copied into the event stream.
-        return (self.__class__, (str(self), self.reason))
+    def __getnewargs_ex__(self) -> tuple[tuple[str, str], dict[str, Any]]:
+        # copy/pickle rebuild via __new__: without the reason, publishing a refused turn's
+        # message.complete (deepcopy of the payload) raises and the viewer hangs.
+        return (str(self), self.reason), {}
 
 
 def format_refusal_stderr(message: str) -> str:

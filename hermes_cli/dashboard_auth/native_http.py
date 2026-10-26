@@ -85,7 +85,12 @@ async def _check_profile_scope(request, profile_id):
     current = not path.startswith(('/api/profiles/', '/api/cron/jobs', '/api/sessions',
                                    '/api/fs/download', '/api/fs/read-data-url'))
     for value in request.query_params.getlist('profile'):
-        _own_profile(value, profile_id, current=current)
+        try:
+            _own_profile(value, profile_id, current=current)
+        except PermissionError:
+            if not _root_reads_unserved_sibling(
+                    request, profile_collection_route(path, request.method), value, profile_id):
+                raise
     content_type = request.headers.get('content-type', '').split(';', 1)[0].strip().lower()
     if not content_type or content_type == 'application/json' or (
             content_type.startswith('application/') and content_type.endswith('+json')):

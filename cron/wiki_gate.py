@@ -22,10 +22,36 @@ CRONS_MD = Path(VAULT) / "Agent-Shared" / "Knowledge" / "CRONS.md"
 JOSE_CHAT = "6360918947"
 
 
-def _profile() -> str:
-    home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
-    m = re.search(r"/profiles/([^/]+)/?$", home.rstrip("/"))
+def _profile_of_home(home: str) -> str:
+    m = re.search(r"/profiles/([^/]+)/?$", str(home).rstrip("/"))
     return m.group(1) if m else "default"
+
+
+def _profile() -> str:
+    """Profile that OWNS the job: the cron store being processed, not the process HERMES_HOME.
+
+    A profile gateway can tick another profile's store (e.g. default's jobs while default
+    restarts, 2026-10-26 07:23); naming the job by the process home paused 9 documented
+    default jobs as "undocumented trader-hermes/codex-jmco" jobs.
+    """
+    try:
+        from cron.jobs import _current_cron_store
+        cron_dir = Path(_current_cron_store().cron_dir).resolve()
+        return _profile_of_home(str(cron_dir.parent))
+    except Exception:  # noqa: BLE001
+        home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+        return _profile_of_home(home)
+
+
+def _documented_any(job_id: str):
+    """(profile, schedule) of the first Activos row with this id, any profile."""
+    text = CRONS_MD.read_text(encoding="utf-8")
+    part = text.split("## Activos", 1)[-1].split("\n## ", 1)[0]
+    for line in part.splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) >= 3 and cells[1].strip("`") == job_id:
+            return cells[0], cells[2]
+    return None
 
 
 def schedule_str(job: dict) -> str:
@@ -81,6 +107,17 @@ def check(job: dict):
     sched = schedule_str(job)
     if documented is not None and documented == sched:
         return None
+    if documented is None:
+        # Job ids are unique random hex: a row for this exact id + schedule under another profile
+        # means the job IS documented and this process is just ticking a sibling's store.
+        try:
+            other = _documented_any(job_id)
+        except Exception:  # noqa: BLE001
+            other = None
+        if other is not None and other[1] == sched:
+            logger.info("cron wiki gate: %s documented under %s (ticked as %s); allowing",
+                        job_id, other[0], profile)
+            return None
     why = ("no está documentado en CRONS.md" if documented is None
            else f"el horario real ({sched}) no coincide con el wiki ({documented})")
     reason = f"wiki-gate: {why}; requiere autorización de Jose"

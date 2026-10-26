@@ -59,6 +59,25 @@ def _own_profile(value, profile_id, *, current=True):
         raise PermissionError('profile_scope_mismatch')
 
 
+def _root_reads_unserved_sibling(request, collection, value, profile_id):
+    """Local patch (Jose 2026-10-26): the root (default) home's own ticket may READ the aggregate
+    session lists of a standalone sibling profile. A standalone profile runs its own gateway, so
+    the Desktop's shared socket can never mint a ticket for it and its sidebar lists failed with
+    'Invalid gateway ticket response'. Read-only GET aggregates only; same user, same root."""
+    if request.method != 'GET' or collection not in {'sessions', 'sessions/sidebar', 'projects/tree'}:
+        return False
+    if not isinstance(value, str) or not value.strip() or value.strip().lower() in {'all', 'current'}:
+        return False
+    try:
+        from hermes_constants import get_default_hermes_root
+        from hermes_cli.web_server_profiles import _resolve_profile_dir
+        root = Path(get_default_hermes_root()).resolve()
+        target = _resolve_profile_dir(value.strip()).resolve()
+    except Exception:  # noqa: BLE001
+        return False
+    return Path(profile_id) == root and target.parent == root / 'profiles'
+
+
 async def _check_profile_scope(request, profile_id):
     # Existing handlers select body.profile OR query.profile. Check every value,
     # including repeated query keys, rather than normalizing away a disagreement.
@@ -97,7 +116,11 @@ async def _check_profile_scope(request, profile_id):
                 raise PermissionError('profile_scope_mismatch')
             for value in values:
                 # These routes interpret absent/all differently from /api/config.
-                _own_profile(value, profile_id, current=False)
+                try:
+                    _own_profile(value, profile_id, current=False)
+                except PermissionError:
+                    if not _root_reads_unserved_sibling(request, collection, value, profile_id):
+                        raise
         elif collection == 'active' and request.method == 'GET':
             return  # Discovery of sticky defaults does not switch this daemon.
         elif collection in {'active', 'import'}:

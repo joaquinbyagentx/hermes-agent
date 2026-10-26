@@ -516,8 +516,21 @@ export async function nativeGatewayHttpHeaders(descriptor: { gatewayEndpoint: Ga
   }
 
   const purpose = nativeGrantPurpose(url, method)
+  const routed = await routedTicketEndpoint(descriptor.gatewayEndpoint, nativeGrantRoute(url, body, method), launchHome, method)
 
-  return { 'X-Hermes-Gateway-Ticket': await mintLocalGatewayTicket(await routedTicketEndpoint(descriptor.gatewayEndpoint, nativeGrantRoute(url, body, method), launchHome, method), purpose) }
+  try {
+    return { 'X-Hermes-Gateway-Ticket': await mintLocalGatewayTicket(routed, purpose) }
+  } catch (error) {
+    // Local patch (2026-10-26): a standalone sibling runs its own gateway, so this shared socket
+    // cannot mint for it. Read-only aggregate session lists fall back to the root's own ticket;
+    // the gateway allows exactly that (native_http._root_reads_unserved_sibling).
+    const collection = profileCollectionRoute(new URL(url).pathname, method)
+    const readOnlyAggregate = method.toUpperCase() === 'GET' && (collection === 'sessions' || collection === 'sessions/sidebar' || collection === 'projects/tree')
+
+    if (!readOnlyAggregate || routed.profile_id === descriptor.gatewayEndpoint.profile_id || !(error instanceof Error) || error.message !== 'Invalid gateway ticket response') {throw error}
+
+    return { 'X-Hermes-Gateway-Ticket': await mintLocalGatewayTicket(descriptor.gatewayEndpoint, purpose) }
+  }
 }
 
 // The installed runtime's own ticket client: every Windows mint (SID-validated pipe), and a POSIX

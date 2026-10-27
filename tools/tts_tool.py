@@ -238,7 +238,45 @@ def _synthesize_builtin(engine: str, text: str, file_str: str, tts_config: dict[
         globals()[entry[2]](text, file_str, tts_config)
 
 
+_VOICE_TAIL_PAD_S = 0.8
+
+
+def _pad_voice_tail(file_str: str) -> str:
+    """Append a short silence to an Ogg/Opus voice bubble (local, Jose 2026-10-25).
+
+    Telegram clips the last word when the clip ends <0.3 s after speech. Re-encodes in
+    place with ffmpeg ``apad``; on any failure the original file is kept unchanged."""
+    import shutil, subprocess
+    from tools.tts_tool_delivery import _OPUS_VOICE_ARGS
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg or not file_str.endswith(".ogg") or not os.path.exists(file_str):
+        return file_str
+    tmp = file_str[:-4] + ".pad.ogg"
+    try:
+        r = subprocess.run(
+            [ffmpeg, "-y", "-loglevel", "error", "-i", file_str,
+             "-af", f"apad=pad_dur={_VOICE_TAIL_PAD_S}", *_OPUS_VOICE_ARGS, tmp],
+            capture_output=True, timeout=60)
+        if r.returncode == 0 and os.path.getsize(tmp) > 0:
+            os.replace(tmp, file_str)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("voice tail pad failed: %s", exc)
+    finally:
+        if os.path.exists(tmp):
+            _remove_quietly(tmp)
+    return file_str
+
+
 def _finalize_voice_delivery(
+    file_str: str, provider: str, command_provider_config: Optional[dict[str, Any]], want_opus: bool,
+) -> tuple:
+    path, voice = _finalize_voice_delivery_inner(file_str, provider, command_provider_config, want_opus)
+    if voice:
+        path = _pad_voice_tail(path)
+    return path, voice
+
+
+def _finalize_voice_delivery_inner(
     file_str: str, provider: str, command_provider_config: Optional[dict[str, Any]], want_opus: bool,
 ) -> tuple:
     """Voice-bubble eligibility (Opus-converting when needed) -> ``(path, voice_compatible)``.

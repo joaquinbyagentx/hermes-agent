@@ -591,10 +591,9 @@ class MCPServerTransportMixin:
             async with _build_client(**client_kwargs) as http_client:
                 # Without max_sse_event_size the SDK parses each event against httpx2's 1 MiB default,
                 # a tighter second cap under our wire cap: a large tools/list or tool result (an
-                # editor screenshot) failed outright. Local: per-server override (config max_sse_event_size).
-                _sse_cap = getattr(self, "_max_sse_event_size", None) or _MCP_HTTP_MAX_BODY_BYTES
+                # editor screenshot) failed outright.
                 async with _core.streamable_http_client(url, http_client=http_client,
-                                                        max_sse_event_size=_sse_cap) as streams:
+                                                        max_sse_event_size=_MCP_HTTP_MAX_BODY_BYTES) as streams:
                     yield streams
         return _owned_client_streams()
 
@@ -619,8 +618,6 @@ class MCPServerTransportMixin:
         if not any(key.lower() == "mcp-protocol-version" for key in headers):
             headers["mcp-protocol-version"] = _core.LATEST_HANDSHAKE_VERSION
         connect_timeout = config.get("connect_timeout", _core._DEFAULT_CONNECT_TIMEOUT)
-        _mse = config.get("max_sse_event_size")
-        self._max_sse_event_size = int(_mse) if _mse else None
         common = (url, headers, connect_timeout, config.get("ssl_verify", True), _resolve_client_cert(self.name, config),
                   self._build_oauth_auth(url, config), bool(config.get("strict_redirect_headers")))
         if config.get("transport") == "sse":

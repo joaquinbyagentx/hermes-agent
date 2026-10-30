@@ -249,16 +249,43 @@ class SessionGatewayMixin:
         """
         if not session_id or not session_key:
             return
+        source_sql = "?"
         identity = (
             session_key, source, user_id, chat_id, chat_type, thread_id, display_name, origin_json,
             transport_profile)
+        if (source == "tool" and user_id and chat_id and chat_type == "dm" and thread_id is None
+                and session_key == f"agent:main:local:dm:{chat_id}"):
+            # The frozen CLI creation surface is `tool`, but a published local
+            # compression child must keep its live `local` label. End-of-turn
+            # peer refresh and explicit same-lane resume must not hide the child
+            # from lineage readers again. Match the full unchanged peer and a
+            # real compression parent; delegate/branch/reset markers still win.
+            from hermes_state_common import _sql_json_extract
+            source_sql = f"""CASE WHEN sessions.source IN ('local', 'tool')
+                AND sessions.session_key = ? AND sessions.chat_id = ? AND sessions.user_id = ?
+                AND sessions.chat_type = 'dm' AND sessions.thread_id IS NULL
+                AND {_sql_json_extract('sessions.model_config', '$._delegate_from')} IS NULL
+                AND {_sql_json_extract('sessions.model_config', '$._branched_from')} IS NULL
+                AND {_sql_json_extract('sessions.model_config', '$._reset_from')} IS NULL
+                AND EXISTS (SELECT 1 FROM sessions peer_parent
+                    WHERE peer_parent.id = sessions.parent_session_id
+                      AND peer_parent.end_reason = 'compression'
+                      AND peer_parent.user_id = sessions.user_id
+                      AND peer_parent.session_key = sessions.session_key
+                      AND peer_parent.chat_id = sessions.chat_id
+                      AND peer_parent.chat_type = 'dm'
+                      AND peer_parent.profile_name IS sessions.profile_name)
+                THEN 'local' ELSE ? END"""
+            identity = (
+                session_key, session_key, chat_id, user_id, source, user_id, chat_id, chat_type,
+                thread_id, display_name, origin_json, transport_profile)
         ancestors = include_compression_ancestors
         query_params = [session_id, *identity] if ancestors else [*identity, session_id]
         def _do(conn):
             conn.execute(
                 f"""{_COMPRESSION_LINEAGE_CTE if ancestors else ""}
                    UPDATE sessions
-                   SET session_key = ?, source = ?, user_id = ?, chat_id = ?,
+                   SET session_key = ?, source = {source_sql}, user_id = ?, chat_id = ?,
                        chat_type = ?, thread_id = ?,
                        display_name = COALESCE(?, display_name),
                        origin_json = COALESCE(?, origin_json),

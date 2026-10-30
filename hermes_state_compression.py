@@ -422,7 +422,7 @@ class SessionCompressionMixin:
             raise CompressionSessionBusyError(
                 f"Compression lease lost before publication: {parent_session_id}")
         parent = conn.execute(
-            """SELECT ended_at, end_reason, cwd, git_branch, git_repo_root,
+            """SELECT source, ended_at, end_reason, cwd, git_branch, git_repo_root,
                       user_id, session_key, chat_id, chat_type,
                       thread_id, display_name, origin_json, profile_name, tool_names,
                       archived, auto_archived, pinned, model_config, created_source
@@ -443,9 +443,20 @@ class SessionCompressionMixin:
                 (parent_session_id,))
         if not messages:
             raise RuntimeError("Compression child handoff must not be empty")
+        # A canonical local CLI may retain source=tool as creation provenance. It
+        # is not a delegated tool child: it continues this exact root-owned route.
+        # Chain readers reject source=tool children. Use the live local label for
+        # this continuation only; _publish_child_session_row preserves created_source.
+        # Keep delegated-tool exclusion and local receipt validation unchanged.
+        child_source = source
+        if (source == parent["source"] == "tool"
+                and parent["session_key"] == f"agent:main:local:dm:{parent_session_id}"
+                and parent["chat_id"] == parent_session_id
+                and parent["chat_type"] == "dm"):
+            child_source = "local"
         self._publish_child_session_row(
             conn, parent, parent_session_id=parent_session_id, child_session_id=child_session_id,
-            source=source, model=model, model_config=model_config, system_prompt=system_prompt,
+            source=child_source, model=model, model_config=model_config, system_prompt=system_prompt,
             cwd=cwd, profile_name=profile_name)
         # Carried handoff tail rows arrive without a timestamp and would otherwise be stamped
         # `now`, breaking their _display_dedupe_key identity with the parent's durable originals

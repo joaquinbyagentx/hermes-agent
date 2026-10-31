@@ -1645,3 +1645,18 @@ test('FIX #95701: transport and server failures at the ticket mint stay retryabl
     assert.equal(wrapped.isReauthRequired, undefined)
   }
 })
+
+test('resolveProfileBackendRoute: a standalone profile dials its own gateway (local patch 2026-10-31)', () => {
+  for (const path of ['/api/sessions/s1/messages?profile=doc', '/api/config', '/api/cron/jobs?profile=doc', '']) {
+    assert.deepEqual(
+      resolveProfileBackendRoute('doc', { primaryProfile: 'default', standaloneProfile: true, requestMethod: 'GET', requestPath: path }),
+      { backend: 'pool', descriptorProfile: null, scopePath: false }
+    )
+  }
+
+  assert.deepEqual(
+    resolveProfileBackendRoute('doc', { primaryProfile: 'default', requestMethod: 'GET', requestPath: '/api/sessions/s1/messages?profile=doc' }),
+    { backend: 'primary', descriptorProfile: 'doc', scopePath: true }
+  )
+  assert.equal(resolveProfileBackendRoute('default', { primaryProfile: 'default', standaloneProfile: true }).backend, 'primary')
+})

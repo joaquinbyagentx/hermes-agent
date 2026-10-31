@@ -638,6 +638,8 @@ export interface ProfileRouteOptions {
   ownEntry?: boolean
   /** `HERMES_DESKTOP_ISOLATED_BACKEND=1`: opt out of the host singleton. */
   isolatedBackend?: boolean
+  /** The profile's config sets `gateway.standalone: true` (it runs its own gateway). */
+  standaloneProfile?: boolean
   requestMethod?: null | string
   requestPath?: null | string
 }
@@ -907,6 +909,14 @@ function resolveProfileBackendRoute(profile, opts: ProfileRouteOptions = {}): Pr
 
     // A stored local profile must not be redirected into the remote primary,
     // even when its REST endpoint supports profile scoping.
+    return { backend: 'pool', descriptorProfile: null, scopePath: false }
+  }
+
+  // Local patch (Jose 2026-10-31): a `gateway.standalone: true` profile runs its OWN gateway, which
+  // the host multiplexer does not serve. Routing its requests through the primary fails every
+  // ticket mint (`Invalid gateway ticket response`) and every resume (`profile_mismatch`), so the
+  // profile dials its own gateway (pool), exactly like an isolated backend.
+  if (opts.standaloneProfile) {
     return { backend: 'pool', descriptorProfile: null, scopePath: false }
   }
 

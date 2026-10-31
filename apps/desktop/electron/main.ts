@@ -10458,6 +10458,30 @@ function primaryProfileKey() {
   return primaryProfilePin.resolve(readActiveDesktopProfile)
 }
 
+// Local patch (Jose 2026-10-31): `gateway.standalone: true` in a named profile's config.yaml means it
+// runs its own gateway; the host multiplexer never serves it. Cached by config mtime.
+const standaloneProfileCache = new Map<string, { mtimeMs: number; value: boolean }>()
+
+function profileIsStandalone(profile: string): boolean {
+  if (!profile || profile === 'default' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(profile)) {return false}
+  const file = path.join(HERMES_HOME, 'profiles', profile, 'config.yaml')
+
+  try {
+    const { mtimeMs } = fs.statSync(file)
+    const cached = standaloneProfileCache.get(profile)
+
+    if (cached && cached.mtimeMs === mtimeMs) {return cached.value}
+    const text = fs.readFileSync(file, 'utf8')
+    const block = /^gateway:\s*\n((?:[ \t]+.*\n?|\s*\n)*)/m.exec(text)?.[1] || ''
+    const value = /^[ \t]+standalone:[ \t]*true\b/m.test(block)
+    standaloneProfileCache.set(profile, { mtimeMs, value })
+
+    return value
+  } catch {
+    return false
+  }
+}
+
 // Options describing the current connection setup for `resolveProfileBackendRoute`.
 function profileRouteOptions(
   profile: string | null | undefined,
@@ -10484,6 +10508,7 @@ function profileRouteOptions(
     // its own backend; absent entries inherit the primary's remote.
     ownEntry: Boolean((config.profiles || {})[key]),
     isolatedBackend: ISOLATED_BACKEND,
+    standaloneProfile: key !== primaryProfileKey() && profileIsStandalone(key),
     requestMethod: request?.method,
     requestPath: request?.path
   }

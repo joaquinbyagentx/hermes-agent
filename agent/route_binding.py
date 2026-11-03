@@ -102,13 +102,16 @@ def _apply_entry_runtime_overrides(agent: Any, entry: dict[str, Any]) -> None:
         parsed = parse_reasoning_effort(entry.get("reasoning_effort"))
         if parsed is not None:
             agent.reasoning_config = parsed
-    if "service_tier" not in entry:
-        return
     from agent.fast_mode import STATIC_TIERS, parse_service_tier
     from hermes_cli.models import resolve_fast_mode_overrides
     overrides = dict(getattr(agent, "request_overrides", {}) or {})
+    # Never carry the primary's tier knobs onto a different provider: an entry without its own
+    # service_tier runs standard (Oracle 2-nov: codex 'priority' leaked into Claude -> turn died).
     overrides.pop("service_tier", None)
     overrides.pop("speed", None)
+    if "service_tier" not in entry:
+        agent.request_overrides = overrides
+        return
     tier = parse_service_tier(entry.get("service_tier"))
     if tier in STATIC_TIERS:
         overrides.update(resolve_fast_mode_overrides(

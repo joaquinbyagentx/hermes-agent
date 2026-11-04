@@ -327,7 +327,7 @@ class TestCaptureResponse:
         parsed = json.loads(out)
         assert parsed["mode"] == "ax"
         assert parsed["total_elements"] == 600
-        assert len(parsed["elements"]) == cu_tool._DEFAULT_MAX_ELEMENTS
+        assert parsed["summary"].count("\n  #") == cu_tool._DEFAULT_MAX_ELEMENTS
         assert parsed["truncated_elements"] == 600 - cu_tool._DEFAULT_MAX_ELEMENTS
         # Truncation must be visible in the human summary so the model knows
         # the JSON view is partial and can re-issue with a tighter scope.
@@ -348,7 +348,7 @@ class TestCaptureResponse:
             )
         parsed = json.loads(out)
         # Ignored: cap stays at the fixed default regardless of the argument.
-        assert len(parsed["elements"]) == cu_tool._DEFAULT_MAX_ELEMENTS
+        assert parsed["summary"].count("\n  #") == cu_tool._DEFAULT_MAX_ELEMENTS
         assert parsed["total_elements"] == 5000
         assert parsed["truncated_elements"] == 5000 - cu_tool._DEFAULT_MAX_ELEMENTS
         # The full tree is spilled so nothing is lost.
@@ -1193,6 +1193,40 @@ class TestCuaDriverSessionReconnect:
             ("call", "start_session", {"session": "hermes-label"}),
             ("call", "list_apps", {}),
         ]
+
+    @pytest.mark.parametrize("name,args,ended_id,reject_again", [
+        ("bring_to_front", {"pid": 42}, "mcp-123-456", False),
+        ("click", {"session": "hermes-label"}, "hermes-label", False),
+        ("bring_to_front", {"pid": 42}, "mcp-123-456", True),
+        ("start_session", {"session": "hermes-label"}, "hermes-label", False),
+        ("end_session", {"session": "hermes-label"}, "hermes-label", False),
+    ])
+    def test_ended_session_recovery(self, name, args, ended_id, reject_again):
+        rejection = {"isError": True, "data": (
+            f"session '{ended_id}' has ended; tool call '{name}' was rejected. "
+            "Call start_session with this id to revive it before issuing further actions.")}
+        success = {"isError": False, "data": "ok"}
+
+        class FakeBridge:
+            def __init__(self):
+                self.calls = []
+
+            def run(self, value, timeout=None):
+                self.calls.append(value)
+                if len(self.calls) == 1 or (len(self.calls) == 3 and reject_again):
+                    return rejection
+                return success
+
+        bridge = FakeBridge()
+        session = self._make_session(bridge)
+        session._declared_session_id = "hermes-label"
+        result = session.call_tool(name, args)
+        expected_calls = [("call", name, args)]
+        if name not in {"start_session", "end_session"}:
+            expected_calls += [("call", "start_session", {"session": ended_id}), ("call", name, args)]
+        assert bridge.calls == expected_calls
+        assert result == (rejection if reject_again or name in {"start_session", "end_session"} else success)
+        assert session._declared_session_id == "hermes-label"
 
 
     def test_cli_fallback_reads_screenshot_from_file(self, tmp_path, monkeypatch):
@@ -2238,28 +2272,27 @@ class TestCapturePayloadBudget:
     exceeded 170KB and the model never saw the elements it needed.
     """
 
-    def test_element_label_is_capped_in_json(self):
+    def test_element_label_is_capped_in_its_row(self):
         from tools.computer_use.backend import UIElement
-        from tools.computer_use.tool import _MAX_ELEMENT_LABEL_CHARS, _element_to_dict
+        from tools.computer_use.tool import _MAX_ELEMENT_LABEL_CHARS, _format_elements
 
         e = UIElement(index=3, role="Document", label="m" * 5000,
                       bounds=(0, 0, 100, 100), app="chrome.exe")
-        d = _element_to_dict(e)
-        assert len(d["label"]) == _MAX_ELEMENT_LABEL_CHARS
-        assert d["label_truncated"] is True
+        (row,) = _format_elements([e])
+        assert "m" * _MAX_ELEMENT_LABEL_CHARS + "'" in row
+        assert "m" * (_MAX_ELEMENT_LABEL_CHARS + 1) not in row
 
-    def test_short_label_not_flagged(self):
+    def test_short_label_kept_whole(self):
         from tools.computer_use.backend import UIElement
-        from tools.computer_use.tool import _element_to_dict
+        from tools.computer_use.tool import _format_elements
 
-        d = _element_to_dict(UIElement(index=0, role="Button", label="OK",
-                                       bounds=(0, 0, 10, 10), app=""))
-        assert d["label"] == "OK"
-        assert "label_truncated" not in d
+        (row,) = _format_elements([UIElement(index=0, role="Button", label="OK",
+                                             bounds=(0, 0, 10, 10), app="")])
+        assert row == "  #0 Button 'OK' @ (0, 0, 10, 10)"
 
-    def test_aux_vision_branch_respects_element_cap(self):
-        """The aux-vision payload must carry the same capped element list as
-        every other capture branch, not the full untruncated tree."""
+    def test_aux_vision_branch_sends_no_element_array(self):
+        """The aux-vision payload must not dump the tree: like every other
+        capture branch, its element list is the capped summary it was given."""
         from tools.computer_use.backend import CaptureResult, UIElement
         from tools.computer_use import tool as cu_tool
 
@@ -2279,7 +2312,7 @@ class TestCapturePayloadBudget:
             )
         assert out is not None
         payload = json.loads(out)
-        assert len(payload["elements"]) == 5
+        assert "elements" not in payload and payload["summary"] == "summary"
         assert payload["total_elements"] == 50
         assert payload["truncated_elements"] == 45
 

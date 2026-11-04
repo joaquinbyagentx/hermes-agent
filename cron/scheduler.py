@@ -754,11 +754,48 @@ def get_restart_wait_cron_counts() -> dict:
         inflight = _running_job_ids | _running_fire_owners.keys()
         restart_safe = (_scope_isolated_job_ids & inflight) - wedged
     wedged = wedged & inflight
+    # LOCAL (Jose 3-nov-2026): a recurring cron run (interval/cron schedule) must not hold a
+    # restart in ``draining`` — it fires again on its next tick, while waiting refuses every new
+    # chat turn (observed: 15-min wiki auditor held the default gateway ~9 min). Counted with
+    # ``wedged`` so the dict shape is unchanged; the run is marked interrupted at stop().
+    recurring = _recurring_inflight_keys(inflight - wedged - restart_safe)
+    wedged = wedged | recurring
     return {
         "awaitable": len(inflight - wedged - restart_safe),
         "wedged": len(wedged),
         "restart_safe": len(restart_safe),
     }
+
+
+def _restart_wait_skip_recurring() -> bool:
+    """``cron.restart_wait_skip_recurring`` (default True): skip recurring runs in the restart wait."""
+    with contextlib.suppress(Exception):
+        _cfg = (load_config() or {}).get("cron", {}) or {}
+        if "restart_wait_skip_recurring" in _cfg:
+            return bool(_cfg.get("restart_wait_skip_recurring"))
+    return cron_env_setting("HERMES_CRON_RESTART_WAIT_SKIP_RECURRING").strip().lower() not in {
+        "0", "false", "no", "off"}
+
+
+def _recurring_inflight_keys(keys) -> frozenset:
+    """In-flight keys (active scope only) whose job has a repeating schedule."""
+    if not keys or not _restart_wait_skip_recurring():
+        return frozenset()
+    # The restart drain polls every 0.1 s: resolve each key once (cached), one jobs.json parse.
+    unresolved = [key for key in keys if key not in _recurring_key_cache]
+    if unresolved:
+        by_id: dict = {}
+        with contextlib.suppress(Exception):
+            from cron.jobs import load_jobs
+            by_id = {j.get("id"): j for j in load_jobs()}
+        local_home = hermes_home_key(_get_hermes_home())
+        for key in unresolved:
+            job = by_id.get(key[1]) if key[0] == local_home else None
+            _recurring_key_cache[key] = bool(job and _job_interval_minutes(job))
+    return frozenset(key for key in keys if _recurring_key_cache.get(key))
+
+
+_recurring_key_cache: dict = {}
 
 
 def is_job_running(job_id: str, home: Optional[Path | str] = None) -> bool:

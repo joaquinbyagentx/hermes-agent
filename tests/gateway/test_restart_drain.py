@@ -585,6 +585,9 @@ def test_wedged_cron_allowance_honours_young_runs_and_job_interval(monkeypatch, 
     import cron.scheduler as sched
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    # LOCAL: opt out of skip-recurring so this test keeps exercising the wedged allowance only.
+    monkeypatch.setenv("HERMES_CRON_RESTART_WAIT_SKIP_RECURRING", "0")
+    monkeypatch.setattr(sched, "load_config", lambda: {})
     monkeypatch.setattr("cron.jobs.load_jobs", lambda: [{"id": "six-hourly-job", "schedule": {"kind": "interval", "minutes": 360}}])
     runner, _adapter = make_restart_runner()
     assert sched.try_register_running_job("six-hourly-job")

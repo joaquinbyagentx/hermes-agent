@@ -2031,6 +2031,39 @@ class TelegramAdapter(TelegramHeldInboundMixin, TelegramTopicRoutingMixin, BaseP
         """Run a recovery coroutine as the tracked in-flight ``_polling_error_task``."""
         self._polling_error_task = asyncio.get_running_loop().create_task(coro)
 
+    _BAD_GATEWAY_GRACE_STEPS = (5, 10, 20)
+
+    @staticmethod
+    def _is_bad_gateway(error: Exception) -> bool:
+        text = str(error or "").lower()
+        return "bad gateway" in text or "502" in text
+
+    async def _await_ptb_self_recovery_after_bad_gateway(self, error: Exception) -> bool:
+        """True when PTB resumed getUpdates on its own after a transient 502 (no stop/rebuild needed)."""
+        if not self._is_bad_gateway(error) or self._polling_network_error_count:
+            return False
+        app = self._app
+        updater = getattr(app, "updater", None)
+        if updater is None or not getattr(updater, "running", False):
+            return False
+        started = time.monotonic()
+        for step in self._BAD_GATEWAY_GRACE_STEPS:
+            await asyncio.sleep(step)
+            if self._teardown_started or self.has_fatal_error:
+                return True
+            last = self._polling_last_progress_monotonic
+            if last is not None and last > started:
+                logger.info(
+                    "[%s] Telegram 502 cleared: PTB resumed getUpdates by itself after %.0fs (no adapter rebuild)",
+                    self.name, time.monotonic() - started)
+                return True
+            if not getattr(updater, "running", False):
+                break
+        logger.warning(
+            "[%s] Telegram 502 grace (%ds) ended without getUpdates progress; using normal reconnect path",
+            self.name, sum(self._BAD_GATEWAY_GRACE_STEPS))
+        return False
+
     async def _handle_polling_network_error(self, error: Exception) -> None:
         """Reconnect polling after a transient network interruption (NetworkError/TimedOut).
 
@@ -2049,6 +2082,11 @@ class TelegramAdapter(TelegramHeldInboundMixin, TelegramTopicRoutingMixin, BaseP
                 "a wedged Updater/dispatcher in place."
             )
             await self._go_fatal_network(message, "[%s] %s (rebuilding adapter via supervisor)", self.name, message)
+            return
+        # Local (Jose 2026-11-06): Telegram's Bot API returns a short daily 502 burst (~19:11 CST).
+        # PTB's own network loop keeps retrying getUpdates by itself, so first give it 5/10/20 s to
+        # resume; stopping the Updater here hangs past the deadline and forces a ~60 s adapter rebuild.
+        if await self._await_ptb_self_recovery_after_bad_gateway(error):
             return
         MAX_NETWORK_RETRIES = 10
         BASE_DELAY = 5

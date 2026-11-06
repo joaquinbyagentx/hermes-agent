@@ -115,8 +115,12 @@ export function prepareNodeDependencies({ source, workspaces, env = process.env,
   }
   // The root project is always installed with a filtered install. The release-age
   // policy is enforced where the lockfile is written (CI), not re-fetched per user.
+  // Local (Jose 2026-11-06): pnpm 12 filtered installs skip Desktop's optional get-windows,
+  // so the packaged build then fails "Prepared get-windows is missing its macOS helper".
+  // An unfiltered install of the same frozen lockfile does install it.
+  const desktopFull = process.platform === 'darwin' && selected.includes('apps/desktop')
   const args = ['install', '--frozen-lockfile', '--trust-lockfile', '--prod=false',
-    ...selected.flatMap(workspace => ['--filter', `{./${workspace}}...`]),
+    ...(desktopFull ? [] : selected.flatMap(workspace => ['--filter', `{./${workspace}}...`])),
   ]
   // This receipt certifies dependency preparation, never compiled product freshness.
   // Keep it inside the cached tree so removing node_modules also removes the receipt.

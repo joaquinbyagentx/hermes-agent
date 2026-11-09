@@ -607,6 +607,10 @@ DANGEROUS_PATTERNS = [
     (r'\bnohup\b.*gateway\s+run\b', "start gateway outside systemd (use 'systemctl --user restart hermes-gateway')"),
     # Self-termination protection: prevent agent from killing its own process
     (r'\b(pkill|killall)\b.*\b(hermes|gateway|cli\.py)\b', "kill hermes/gateway process (self-termination)"),
+    # hermes-local (8-nov): pkill honours only ONE pattern; extra -f flags or an option-looking pattern turn a
+    # targeted kill into a broad one (took down 12 gateways on 2026-11-08 14:26).
+    (r'\bpkill\b[^|;&]*\s-f\b[^|;&]*\s-f\b', "pkill with several -f patterns (only one is honoured)"),
+    (r'\bpkill\b(?:\s+-[A-Za-z0-9]+)*\s+-f\s+["\']?-', "pkill -f with an option-looking pattern"),
     # Self-termination via kill + $(pgrep/pidof): the substitution is opaque to the name-based
     # pattern above, so catch the structural form.
     (r'\bkill\b.*\$\(\s*(pgrep|pidof)\b', "kill process via pgrep/pidof expansion (self-termination)"),

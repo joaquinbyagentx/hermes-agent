@@ -799,6 +799,20 @@ def _take_real_profile_note(route_key: str) -> dict:
     return {"real_profile_unavailable": _real_profile_fallback[route_key]}
 
 
+def _implicit_session_name(task_id: Optional[str]) -> str:
+    """hermes-local: default browser session = <profile>-<task prefix>; '' if nothing usable."""
+    try:
+        from hermes_cli.profiles import get_active_profile_name
+        profile = get_active_profile_name() or "default"
+    except Exception:
+        profile = "default"
+    tid = re.sub(r"[^A-Za-z0-9]", "", str(task_id or ""))[:8]
+    if not tid:
+        return ""
+    name = re.sub(r"[^A-Za-z0-9_-]", "-", f"{profile}-{tid}").strip("-_")[:64]
+    return name if _SESSION_RE.match(name) else ""
+
+
 def browser_exec(code: str, session: str = "", timeout_s: int = _DEFAULT_TIMEOUT_S,
                  task_id: Optional[str] = None, local: bool = False):
     """Run Python code through the browser-use CLI, and return its output"""
@@ -812,6 +826,10 @@ def browser_exec(code: str, session: str = "", timeout_s: int = _DEFAULT_TIMEOUT
     verdict = _code_url_verdict(code)
     if verdict.blocked:
         return tool_error(verdict.blocked)
+    # hermes-local: no session given -> one daemon/tab per profile+conversation, so two agents never
+    # drive the same tab of the shared daemon `default`.
+    if not session:
+        session = _implicit_session_name(task_id)
     # One endpoint per call: any private URL sends the whole call to the local sidecar. A call with no URL
     # literal stays on the route the previous call took.
     route_key = _backend_cache_key(task_id, session)

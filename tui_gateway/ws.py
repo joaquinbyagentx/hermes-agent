@@ -296,7 +296,10 @@ class WSTransport:
                 except Exception as exc:
                     # Latch while holding the writer lock so queued batches observe the failure first.
                     self._closed = True
-                    _log.warning("ws send failed peer=%s error_type=%s error=%s", self._peer, type(exc).__name__, exc)
+                    # LOCAL 2026-11-10: the desktop app's once-a-minute status probe hangs up right after
+                    # client.capabilities; a peer-initiated disconnect is normal, not a warning.
+                    _lvl = logging.DEBUG if type(exc).__name__ == "WebSocketDisconnect" else logging.WARNING
+                    _log.log(_lvl, "ws send failed peer=%s error_type=%s error=%s", self._peer, type(exc).__name__, exc)
                     return
 
     def close(self) -> None:  # loop thread (handle_ws finally), so the TimerHandle is safe
@@ -444,7 +447,8 @@ async def handle_ws(ws: Any, *, auth_identity: dict | None = None, subprotocol: 
         if not await transport.write_async(frame):
             disconnect_reason = reason
             send_failures += 1
-            _log.warning(msg, *args)
+            # LOCAL 2026-11-10: desktop status probe disconnects right after client.capabilities.
+            _log.log(logging.DEBUG if args and args[-1] == "client.capabilities" else logging.WARNING, msg, *args)
             raise _SendFailed
 
     def _error(code: int, message: str, req_id: Any) -> dict:

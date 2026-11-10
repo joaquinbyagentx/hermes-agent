@@ -39,7 +39,7 @@ _LEGACY_PRE_COMPRESS_API_VERSION = 1
 # shutdown_all() drain bound; workers are daemon threads so a wedged provider never
 # blocks interpreter exit.
 _SYNC_DRAIN_TIMEOUT_S = 5.0
-_EXTERNAL_PREFETCH_TIMEOUT_S = 12.0  # local: Hindsight on Qwen p95 ~7s, cold starts >8s (Jose 2-nov)
+_EXTERNAL_PREFETCH_TIMEOUT_S = 20.0  # local: Hindsight on Qwen, big banks (oracle/gametests/codex) recall 6-12s warm; 12s skipped ~1 in 5 turns (Jose 10-nov)
 # A background provider call (sync_turn / queue_prefetch) running longer than this is treated as
 # stuck. Well above the shutdown drain bound and the prefetch timeout so a slow-but-healthy backend
 # is never counted.

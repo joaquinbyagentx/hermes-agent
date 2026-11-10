@@ -5775,7 +5775,7 @@ class TelegramAdapter(TelegramContactMixin, TelegramHeldInboundMixin, TelegramRe
         self,
         source: Any,
         *,
-        attempts: int = 5,
+        attempts: int = 3,
     ) -> tuple[Any, bytes]:
         """Fetch inbound Telegram media with bounded read-only retries.
 

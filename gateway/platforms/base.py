@@ -4520,11 +4520,25 @@ class BasePlatformAdapter(ABC):
                 if text_content and not _tts_caption_delivered:
                     # Keep the handler drain-visible through the platform ACK and ledger write.
                     track = getattr(getattr(self, "gateway_runner", None), "_track_outbound_delivery_task", None)
+                    _cur = asyncio.current_task()
                     if callable(track):
-                        track(asyncio.current_task())
-                    await self._send_final_text(
-                        event, session_key, text_content, _final_thread_metadata,
-                        is_ephemeral_response, _ephemeral_ttl, _record_delivery)
+                        track(_cur)
+                    try:
+                        await self._send_final_text(
+                            event, session_key, text_content, _final_thread_metadata,
+                            is_ephemeral_response, _ephemeral_ttl, _record_delivery)
+                    finally:
+                        # Release drain visibility once the ACK/ledger boundary is crossed,
+                        # so a long-lived handler never pins the gateway "busy".
+                        _tasks = getattr(getattr(self, "gateway_runner", None), "_active_outbound_delivery_tasks", None)
+                        if isinstance(_tasks, set) and _cur in _tasks:
+                            _tasks.discard(_cur)
+                            _persist = getattr(getattr(self, "gateway_runner", None), "_persist_active_agents", None)
+                            if callable(_persist):
+                                try:
+                                    _persist()
+                                except Exception:
+                                    pass
                 await self._deliver_attachments(
                     event, extracted, _final_thread_metadata,
                     anything_sent=delivery_attempted or _tts_caption_delivered,
